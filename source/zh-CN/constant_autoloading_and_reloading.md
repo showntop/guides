@@ -961,36 +961,43 @@ transparent.
 Rails internals make extensive use of it to defer as much work as possible from
 the boot process. But constant autoloading in Rails is **not** implemented with
 `Module#autoload`.
-Rails内部扩展了它以便在启动过程中做尽可能多的工作
+Rails内部扩展了它以便在启动过程中做尽可能多的工作。但是在Rails里`Module#autoload`并**没有**实现常量autoloading。
 
 One possible implementation based on `Module#autoload` would be to walk the
 application tree and issue `autoload` calls that map existing file names to
 their conventional constant name.
+一个基于`Module#autoload`的可能实现是遍历application树然后通过文件名与常量名称的映射发出`autoload`调用
 
 There are a number of reasons that prevent Rails from using that implementation.
+有很多原因不支持Rails使用这种方式实现。
 
 For example, `Module#autoload` is only capable of loading files using `require`,
 so reloading would not be possible. Not only that, it uses an internal `require`
 which is not `Kernel#require`.
+例如，`Module#autoload`仅能使用`require`来loading文件，因此reloading将不能实现。不仅如此，它使用了内部的 `require`。
 
 Then, it provides no way to remove declarations in case a file is deleted. If a
 constant gets removed with `Module#remove_const` its `autoload` is not triggered
 again. Also, it doesn't support qualified names, so files with namespaces should
 be interpreted during the walk tree to install their own `autoload` calls, but
 those files could have constant references not yet configured.
+继而，一旦一个文件被删除，并没用方法去去除声明。如果一个常量使用`Module#remove_const`来移除，那么它的`autoload`却没有再一次被触发。而且，它不支持qualified名字，一个带有命名空间的文件会在遍历树安装它们自己的`autoload`调用时被解析，但是这些文件可以引用尚未被配置的常量。
 
 An implementation based on `Module#autoload` would be awesome but, as you see,
 at least as of today it is not possible. Constant autoloading in Rails is
 implemented with `Module#const_missing`, and that's why it has its own contract,
 documented in this guide.
-
+基于`Module#autoload`的另一个实现可能会感觉令人惊叹，但是，正如你了解的，至少今天它仍旧不支持。Rails里的常量autoloading使用`Module#const_missing`实现，并且这是它具有自己规则的原因。这篇文档要说的。
 
 Common Gotchas
+一般知识
 --------------
 
 ### Nesting and Qualified Constants
+### Nesting和Qualified常量
 
 Let's consider
+看这个例子
 
 ```ruby
 module Admin
@@ -1003,6 +1010,7 @@ end
 ```
 
 and
+和
 
 ```ruby
 class Admin::UsersController < ApplicationController
@@ -1015,14 +1023,17 @@ end
 To resolve `User` Ruby checks `Admin` in the former case, but it does not in
 the latter because it does not belong to the nesting. (See [Nesting](#nesting)
 and [Resolution Algorithms](#resolution-algorithms).)
+在上面的例子中，如果要解析`User`，Ruby需要检查`Admin`，但是后面的例子就不会，因为它不属于nesting。 (看[Nesting](#nesting)和[解析算法](#resolution-algorithms).)
 
 Unfortunately Rails autoloading does not know the nesting in the spot where the
 constant was missing and so it is not able to act as Ruby would. In particular,
 `Admin::User` will get autoloaded in either case.
+不幸的是,在常量丢失的情况中，Rails autoloading不识别nesting，因此它不能像Ruby一样工作。这种情况下，`Admin::User`会使用另一种方式被autoload。
 
 Albeit qualified constants with `class` and `module` keywords may technically
 work with autoloading in some cases, it is preferable to use relative constants
 instead:
+尽管使用`class`和`module`关键字的qualified常量在某些情况下可能会严格的autoloading，但是仍然建议使用相对常量。
 
 ```ruby
 module Admin
@@ -1035,11 +1046,13 @@ end
 ```
 
 ### Autoloading and STI
+### Autoloading和STI
 
 Single Table Inheritance (STI) is a feature of Active Record that enables
 storing a hierarchy of models in one single table. The API of such models is
 aware of the hierarchy and encapsulates some common needs. For example, given
 these classes:
+单表继承是ActiveRecord用来在一张表中存储模型层级特性。这种模型的API暴漏了层级和概况来满足一些通用需求。例如，看下面的类：
 
 ```ruby
 # app/models/polygon.rb
@@ -1059,25 +1072,31 @@ end
 `Rectangle.create` creates a row that represents a rectangle. If `id` is the
 ID of an existing record, `Polygon.find(id)` returns an object of the correct
 type.
+`Triangle.create`创建了一行用来表示三角形，`Rectangle.create`创建一行用来表示矩形。如果`id`是一个已存在记录的ID，`Polygon.find(id)`会返回正确类型的对象。
 
 Methods that operate on collections are also aware of the hierarchy. For
 example, `Polygon.all` returns all the records of the table, because all
 rectangles and triangles are polygons. Active Record takes care of returning
 instances of their corresponding class in the result set.
+操作集合的方法也知道层级的存在。例如，`Polygon.all`会返回所有表记录，因为无论矩形还是三角形都是多边形。ActiveRecord在结果集中关注他们对应类的返回实例。
 
 Types are autoloaded as needed. For example, if `Polygon.first` is a rectangle
 and `Rectangle` has not yet been loaded, Active Record autoloads it and the
 record is correctly instantiated.
+类型会按需被autoload。例如，如果`Polygon.first`是一个矩形但是`Rectangle`还没有被load，ActiveRecord会autoload它并且可以被正确实例化。
 
 All good, but if instead of performing queries based on the root class we need
 to work on some subclass, things get interesting.
+这些一切还好，但是如果我们基于根类去做查询操作，而这些操作是作用于子类，那么事情就有趣了。
 
 While working with `Polygon` you do not need to be aware of all its descendants,
 because anything in the table is by definition a polygon, but when working with
 subclasses Active Record needs to be able to enumerate the types it is looking
 for. Let’s see an example.
+如果使用`Polygon`，你就不必了解每一个后代，因为表中的所有东西都被定义成了polygon，但是如果使用子类，ActiveRecord需要列举它要查找的类型。看一个例子。
 
 `Rectangle.all` only loads rectangles by adding a type constraint to the query:
+`Rectangle.all`通过在查询中添加一个类型限制来仅加载矩形：
 
 ```sql
 SELECT "polygons".* FROM "polygons"
@@ -1085,6 +1104,7 @@ WHERE "polygons"."type" IN ("Rectangle")
 ```
 
 Let’s introduce now a subclass of `Rectangle`:
+下面介绍`Rectangle`的子类:
 
 ```ruby
 # app/models/square.rb
@@ -1093,6 +1113,7 @@ end
 ```
 
 `Rectangle.all` should now return rectangles **and** squares:
+`Rectangle.all`应该能够返回矩形 **和** 正方形
 
 ```sql
 SELECT "polygons".* FROM "polygons"
@@ -1101,9 +1122,11 @@ WHERE "polygons"."type" IN ("Rectangle", "Square")
 
 But there’s a caveat here: How does Active Record know that the class `Square`
 exists at all?
+但是这儿会有一个疑问：ActiveRecord怎么会知道类`Square`的存在呢？
 
 Even if the file `app/models/square.rb` exists and defines the `Square` class,
 if no code yet used that class, `Rectangle.all` issues the query
+虽然文件`app/models/square.rb`存在并且定义了类`Square`，如果还没有代码使用这个类，`Rectangle.all`会发出查询请求。
 
 ```sql
 SELECT "polygons".* FROM "polygons"
@@ -1111,10 +1134,12 @@ WHERE "polygons"."type" IN ("Rectangle")
 ```
 
 That is not a bug, the query includes all *known* descendants of `Rectangle`.
+这不是程序错误，查询语句会包含所有 `Rectangle` *已知的* 后代
 
 A way to ensure this works correctly regardless of the order of execution is to
 load the leaves of the tree by hand at the bottom of the file that defines the
 root class:
+一种不依赖于执行顺序，能确保这种情况工作正确的方式是在定义根类的文件的底部手动load树的所有枝叶。
 
 ```ruby
 # app/models/polygon.rb
@@ -1127,6 +1152,7 @@ Only the leaves that are **at least grandchildren** need to be loaded this
 way. Direct subclasses do not need to be preloaded. If the hierarchy is
 deeper, intermediate classes will be autoloaded recursively from the bottom
 because their constant will appear in the class definitions as superclass.
+仅仅 **少量的孙子** 类需要通过这种方式来load。直接子类不需要提前load
 
 ### Autoloading and `require`
 
