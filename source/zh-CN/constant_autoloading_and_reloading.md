@@ -1152,11 +1152,13 @@ Only the leaves that are **at least grandchildren** need to be loaded this
 way. Direct subclasses do not need to be preloaded. If the hierarchy is
 deeper, intermediate classes will be autoloaded recursively from the bottom
 because their constant will appear in the class definitions as superclass.
-仅仅 **少量的孙子** 类需要通过这种方式来load。直接子类不需要提前load
+仅仅 **少量的孙子** 类需要通过这种方式来load。直接子类不需要提前load。如果继承层次较深，中间类会被递归的从UI底层开始autoload，因为它们的常量会作为超类出现在类定义中。
 
+### Autoloading and `require`
 ### Autoloading and `require`
 
 Files defining constants to be autoloaded should never be `require`d:
+在文件中定义常量，如果希望它被autoload，就一定不要使用`require`：
 
 ```ruby
 require 'user' # DO NOT DO THIS
@@ -1167,25 +1169,32 @@ end
 ```
 
 There are two possible gotchas here in development mode:
+在开发模式下，这里有两种可能的方案：
 
 1. If `User` is autoloaded before reaching the `require`, `app/models/user.rb`
 runs again because `load` does not update `$LOADED_FEATURES`.
+1. 如果`User`在到达`require`之前已经被autoload，那么`app/models/user.rb`会在一次运行，因为`load`不会更新`$LOADED_FEATURES`。
 
 2. If the `require` runs first Rails does not mark `User` as an autoloaded
 constant and changes to `app/models/user.rb` aren't reloaded.
+2. 如果先执行的是`require`，Rails就不会把`User`标记为autoloaded常量并且修改`app/models/user.rb`，也不会被reload。
 
 Just follow the flow and use constant autoloading always, never mix
 autoloading and `require`. As a last resort, if some file absolutely needs to
 load a certain file use `require_dependency` to play nice with constant
 autoloading. This option is rarely needed in practice, though.
+一定要按照这个流程使用常量autoloading，不混合autoloading和`require`。实在不行，如果有些文件绝对需要load另一些文件，请使用`require_dependency`来做。但是在实践中这个功能很少使用。
 
 Of course, using `require` in autoloaded files to load ordinary 3rd party
 libraries is fine, and Rails is able to distinguish their constants, they are
 not marked as autoloaded.
+当然，在autoloaded的文件里使用`require`来load普通的第三方库是没有问题的，并且Rails能够区分它们的常量，它们没有被标记为autoloaded。
 
 ### Autoloading and Initializers
+### Autoloading和初始化
 
 Consider this assignment in `config/initializers/set_auth_service.rb`:
+在`config/initializers/set_auth_service.rb`里考虑这个分配过程：
 
 ```ruby
 AUTH_SERVICE = if Rails.env.production?
@@ -1200,12 +1209,15 @@ corresponds to the environment via `AUTH_SERVICE`. In development mode
 `MockedAuthService` gets autoloaded when the initializer runs. Let’s suppose
 we do some requests, change its implementation, and hit the application again.
 To our surprise the changes are not reflected. Why?
+这个设置的目的是使应用能够通过`AUTH_SERVICE`来使用相关环境的类。在开发模式下，初始化的时候`MockedAuthService`会被autoloaded。假如我们做一些请求，改变它的实现，然后再次使用应用，但是这些修改并没有起作用，这是为啥？
 
 As [we saw earlier](#constant-reloading), Rails removes autoloaded constants,
 but `AUTH_SERVICE` stores the original class object. Stale, non-reachable
 using the original constant, but perfectly functional.
+正如 [我们之前了解的] (#constant-reloading)，Rails会去除autoloaded常量，但是`AUTH_SERVICE`存储了原始的类对象。
 
 The following code summarizes the situation:
+以下代码概括了大概情况：
 
 ```ruby
 class C
@@ -1223,8 +1235,10 @@ C           # => uninitialized constant C (NameError)
 
 Because of that, it is not a good idea to autoload constants on application
 initialization.
+因此，在应用程序初始化的时候autoload常量并不是一个好的想法。
 
 In the case above we could implement a dynamic access point:
+在上面的情况我们可以实现一个动态访问点：
 
 ```ruby
 # app/models/auth_service.rb
@@ -1243,28 +1257,37 @@ end
 
 and have the application use `AuthService.instance` instead. `AuthService`
 would be loaded on demand and be autoload-friendly.
+并且使用`AuthService.instance`来作为替代。`AuthService`可以按需loaded并且可以autoload-friendly。
 
 ### `require_dependency` and Initializers
+### `require_dependency`和初始化
 
 As we saw before, `require_dependency` loads files in an autoloading-friendly
 way. Normally, though, such a call does not make sense in an initializer.
+如我们之前了解的，`require_dependency`使用autoloading-friendly的方式load文件。因此，正常情况下，在初始化器中这种调用不会起到作用。
 
 One could think about doing some [`require_dependency`](#require-dependency)
 calls in an initializer to make sure certain constants are loaded upfront, for
 example as an attempt to address the [gotcha with STIs](#autoloading-and-sti).
+有人可能想到使用[`require_dependency`](#require-dependency)调用
 
 Problem is, in development mode [autoloaded constants are wiped](#constant-reloading)
 if there is any relevant change in the file system. If that happens then
 we are in the very same situation the initializer wanted to avoid!
+问题是，在开发模式下如果文件系统有所改变，[autoloaded常量会被清除](#constant-reloading)。
 
 Calls to `require_dependency` have to be strategically written in autoloaded
 spots.
+在autoloaded的场景中，对`require_dependency`的调用需要有策略性的。
 
 ### When Constants aren't Missed
+### 什么时候常量不会丢失
 
 #### Relative References
+#### 相对引用
 
 Let's consider a flight simulator. The application has a default flight model
+看一下flight simulator. 应用有一个默认的flight模型。
 
 ```ruby
 # app/models/flight_model.rb
@@ -1273,6 +1296,7 @@ end
 ```
 
 that can be overridden by each airplane, for instance
+这可以被任一个airplane重写，例如
 
 ```ruby
 # app/models/bell_x1/flight_model.rb
@@ -1295,10 +1319,13 @@ The initializer wants to create a `BellX1::FlightModel` and nesting has
 `BellX1`, that looks good. But if the default flight model is loaded and the
 one for the Bell-X1 is not, the interpreter is able to resolve the top-level
 `FlightModel` and autoloading is thus not triggered for `BellX1::FlightModel`.
+initializer想要创建一个`BellX1::FlightModel`并且nesting中有`BellX1`，这看上去没有问题。但是如果默认的flight模型已经被loaded，而Bell-X1中的那个还没有，解析器会解析为顶层的`FlightModel`并且autoloading因此将不被触发。
 
 That code depends on the execution path.
+代码依赖于执行路径。
 
 These kind of ambiguities can often be resolved using qualified constants:
+这种歧义通常通过qualified常量得到解决：
 
 ```ruby
 module BellX1
@@ -1311,6 +1338,7 @@ end
 ```
 
 Also, `require_dependency` is a solution:
+`require_dependency`也是一种解决方案：
 
 ```ruby
 require_dependency 'bell_x1/flight_model'
@@ -1325,8 +1353,10 @@ end
 ```
 
 #### Qualified References
+#### Qualified引用
 
 Given
+例如
 
 ```ruby
 # app/models/hotel.rb
@@ -1345,11 +1375,13 @@ end
 ```
 
 the expression `Hotel::Image` is ambiguous, depends on the execution path.
+表达式`Hotel::Image`是有歧义的，依赖于执行路径。
 
 As [we saw before](#resolution-algorithm-for-qualified-constants), Ruby looks
 up the constant in `Hotel` and its ancestors. If `app/models/image.rb` has
 been loaded but `app/models/hotel/image.rb` hasn't, Ruby does not find `Image`
 in `Hotel`, but it does in `Object`:
+正如 [我们之前了解到的](#resolution-algorithm-for-qualified-constants)，Ruby会在`Hotel`以及它的祖先中查找常量。如果`app/models/image.rb`已经被loaded但是`app/models/hotel/image.rb`还没有，Ruby不会再`Hotel`中查找`Image`，而是在 `Object`中：
 
 ```
 $ bin/rails r 'Image; p Hotel::Image' 2>/dev/null
@@ -1359,14 +1391,17 @@ Image # NOT Hotel::Image!
 The code evaluating `Hotel::Image` needs to make sure
 `app/models/hotel/image.rb` has been loaded, possibly with
 `require_dependency`.
+这段代码评估`Hotel::Image`，需要确保`app/models/hotel/image.rb`已经被loaded，可能使用`require_dependency`。
 
 In these cases the interpreter issues a warning though:
+在这些案例中，解析器会发出一个警告：
 
 ```
 warning: toplevel constant Image referenced by Hotel::Image
 ```
 
 This surprising constant resolution can be observed with any qualifying class:
+这些常量解析可以通过qualifying类进行观察：
 
 ```
 2.1.5 :001 > String::Array
@@ -1376,10 +1411,13 @@ This surprising constant resolution can be observed with any qualifying class:
 
 WARNING. To find this gotcha the qualifying namespace has to be a class,
 `Object` is not an ancestor of modules.
+WARNING. 如果要了解qualifying命名空间被当做一个类的原理，`Object`不是模块的祖先。
 
 ### Autoloading within Singleton Classes
+### 单件类内部的Autoloading
 
 Let's suppose we have these class definitions:
+看下面的类定义：
 
 ```ruby
 # app/models/hotel/services.rb
@@ -1401,15 +1439,19 @@ end
 If `Hotel::Services` is known by the time `app/models/hotel/geo_location.rb`
 is being loaded, `Services` is resolved by Ruby because `Hotel` belongs to the
 nesting when the singleton class of `Hotel::GeoLocation` is opened.
+如果在`app/models/hotel/geo_location.rb`被loaded的时候可以识别`Hotel::Services`，`Services`会被Ruby解析，因为在单件类`Hotel::GeoLocation`被打开的时候，`Hotel`属于nesting。
 
 But if `Hotel::Services` is not known, Rails is not able to autoload it, the
 application raises `NameError`.
+但是如果`Hotel::Services`可以被识别，Rails就不能autoload它，应用汇抛出`NameError`错误。
 
 The reason is that autoloading is triggered for the singleton class, which is
 anonymous, and as [we saw before](#generic-procedure), Rails only checks the
 top-level namespace in that edge case.
+对于一个匿名单件类，正如[我们之前看到的](#generic-procedure)，在这个特殊例子中，autoloading被触发的原因是Rails仅仅检查顶层的命名空间
 
 An easy solution to this caveat is to qualify the constant:
+对于这个警告的一个简单解决方案是使用qualify常量：
 
 ```ruby
 module Hotel
@@ -1422,9 +1464,11 @@ end
 ```
 
 ### Autoloading in `BasicObject`
+### Autoloading in `BasicObject`
 
 Direct descendants of `BasicObject` do not have `Object` among their ancestors
 and cannot resolve top-level constants:
+在他们的祖先中，`BasicObject`的直接后代不具有`Object`并且不能解析顶层常量：
 
 ```ruby
 class C < BasicObject
@@ -1433,6 +1477,7 @@ end
 ```
 
 When autoloading is involved that plot has a twist. Let's consider:
+在autoloading进行的时候，看下面：
 
 ```ruby
 class C < BasicObject
@@ -1446,6 +1491,7 @@ Since Rails checks the top-level namespace `User` gets autoloaded just fine the
 first time the `user` method is invoked. You only get the exception if the
 `User` constant is known at that point, in particular in a *second* call to
 `user`:
+因为Rails会检查顶层命名空间，`User`会在`user`方法第一次被调用时被autoloaded。如果在这个时间点`User`能被识别，你会收到异常，尤其 *second* 调用作用于`user`：
 
 ```ruby
 c = C.new
@@ -1455,9 +1501,11 @@ c.user # NameError: uninitialized constant C::User
 
 because it detects a parent namespace already has the constant (see [Qualified
 References](#qualified-references).)
+因为他会检查在常量中存在的父命名空间（详见[Qualified引用](#qualified-references)。）
 
 As with pure Ruby, within the body of a direct descendant of `BasicObject` use
 always absolute constant paths:
+如果是一个存Ruby程序，在`BasicObject`的直接子代类体内，通常使用绝对常量路径。
 
 ```ruby
 class C < BasicObject
